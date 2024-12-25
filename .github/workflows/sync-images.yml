@@ -1,0 +1,65 @@
+name: Space Images to GitHub Packages
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'version.txt'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to sync (optional, defaults to version.txt)'
+        required: false
+        type: string
+
+env:
+  JETBRAINS_REGISTRY: public.registry.jetbrains.space
+  GITHUB_REGISTRY: ghcr.io
+  REPO_OWNER: diopresi
+  REPO_NAME: space-on-premises
+
+jobs:
+  sync-images:
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GITHUB_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get version
+        id: version
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            VERSION="${{ inputs.version }}"
+            echo "Using manually provided version: $VERSION"
+          else
+            VERSION=$(cat version.txt)
+            echo "Using version from version.txt: $VERSION"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Sync images
+        run: |
+          IMAGES=("init-configs" "space" "vcs-hosting" "packages" "langservice")
+          
+          for IMG in "${IMAGES[@]}"; do
+            echo "Processing $IMG..."
+            SOURCE_IMG="${{ env.JETBRAINS_REGISTRY }}/p/space-on-premises/docker/$IMG:${{ env.VERSION }}"
+            TARGET_IMG="${{ env.GITHUB_REGISTRY }}/${{ env.REPO_OWNER }}/${{ env.REPO_NAME }}/$IMG:${{ env.VERSION }}"
+            
+            echo "Copying $SOURCE_IMG to $TARGET_IMG..."
+            
+            docker run --rm quay.io/skopeo/stable copy --all --src-no-creds --dest-creds ${{ github.actor }}:${{ secrets.GITHUB_TOKEN }} docker://$SOURCE_IMG  docker://$TARGET_IMG
+          done
